@@ -2,25 +2,26 @@ FROM devlikeapro/waha:latest
 
 USER root
 
-# Install Python 3, pip and curl
+# Install Python 3, pip, curl and dos2unix
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
     curl \
+    dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app/assistant
+WORKDIR /app
 
 # Install Python dependencies
-COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt --break-system-packages
+COPY requirements.txt /app/assistant/requirements.txt
+RUN pip3 install --no-cache-dir -r /app/assistant/requirements.txt --break-system-packages
 
-# Copy all assistant source files
-COPY . .
+# Copy all assistant source files into /app/assistant
+COPY . /app/assistant/
 
-# Set execution permissions
-RUN chmod +x /app/assistant/start.sh
+# Convert any CRLF to Linux LF and set execution permissions
+RUN dos2unix /app/assistant/start.sh && chmod +x /app/assistant/start.sh
 
 # Environment settings
 ENV PORT=10000

@@ -21,14 +21,14 @@ if [ -n "$DATABASE_URL" ]; then
     export WHATSAPP_SESSIONS_POSTGRESQL_URL="$DATABASE_URL"
 fi
 
-# 1. Start WAHA in background
-echo "Starting WAHA engine..."
-/entrypoint.sh &
+# 1. Start WAHA inside /app directory in background
+echo "Starting WAHA engine from /app..."
+(cd /app && /entrypoint.sh) &
 WAHA_PID=$!
 
 # 2. Wait for WAHA to be responsive
 echo "Waiting for WAHA to initialize on localhost:3000..."
-MAX_RETRIES=30
+MAX_RETRIES=35
 COUNT=0
 until curl -s http://localhost:3000/api/server/version > /dev/null 2>&1; do
     sleep 2
