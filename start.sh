@@ -15,7 +15,7 @@ export WHATSAPP_SWAGGER_ENABLED=false
 export WAHA_DASHBOARD_ENABLED=false
 export WAHA_EVENTS_DOWNLOAD_MEDIA=false
 export WAHA_API_DOWNLOAD_MEDIA=false
-export WHATSAPP_HOOK_URL="http://localhost:${RENDER_PORT}/api/webhook/waha"
+export WHATSAPP_HOOK_URL="http://127.0.0.1:${RENDER_PORT}/api/webhook/waha"
 export WHATSAPP_HOOK_EVENTS="message,session.status"
 
 # 1. Start WAHA in background on port 3000

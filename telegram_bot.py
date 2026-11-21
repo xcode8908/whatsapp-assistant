@@ -27,7 +27,7 @@ class TelegramBotManager:
         self.app: Optional[Application] = None
 
     def is_admin(self, user_id: int) -> bool:
-        if not self.admin_id:
+        if not self.admin_id or self.admin_id == 0:
             return True
         return user_id == self.admin_id
 
@@ -50,8 +50,17 @@ class TelegramBotManager:
     # Command Handlers
     # ==========================================
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self.is_admin(update.effective_user.id):
-            await update.message.reply_text("⛔ Unauthorized access.")
+        user_id = update.effective_user.id
+        logger.info(f"User ID {user_id} triggered /start. (Configured Admin: {self.admin_id})")
+        
+        if not self.is_admin(user_id):
+            await update.message.reply_text(
+                f"⛔ *Unauthorized Access!*\n\n"
+                f"Your actual Telegram User ID is: `{user_id}`\n"
+                f"Configured Admin ID is: `{self.admin_id}`\n\n"
+                f"Please reply with this ID so it can be set as Admin!",
+                parse_mode="Markdown"
+            )
             return
 
         is_offline = await db.is_offline_mode()

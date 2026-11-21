@@ -16,8 +16,8 @@ class Settings:
     # Gemini AI
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
     
-    # WAHA WhatsApp API
-    WAHA_URL: str = os.getenv("WAHA_URL", "http://localhost:3000").rstrip("/")
+    # WAHA WhatsApp API (use 127.0.0.1 for explicit IPv4 in Docker)
+    WAHA_URL: str = os.getenv("WAHA_URL", "http://127.0.0.1:3000").rstrip("/")
     WAHA_SESSION: str = os.getenv("WAHA_SESSION", "default").strip()
     
     # Database (Supabase PostgreSQL or fallback SQLite)
