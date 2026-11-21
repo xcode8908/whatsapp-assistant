@@ -1,6 +1,8 @@
+import asyncio
+import base64
 import httpx
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -16,7 +18,7 @@ class WahaClient:
         self.client = httpx.AsyncClient(base_url=self.base_url, headers=headers, timeout=30.0)
 
     async def get_session_status(self) -> str:
-        """Returns session status: 'WORKING', 'SCAN_QR_CODE', 'STOPPED', etc."""
+        """Returns session status: 'WORKING', 'SCAN_QR_CODE', 'STOPPED', 'STARTING', etc."""
         try:
             resp = await self.client.get(f"/api/sessions/{self.session}")
             if resp.status_code == 200:
@@ -29,13 +31,19 @@ class WahaClient:
         return "DISCONNECTED"
 
     async def start_session(self) -> bool:
-        """Starts or creates the WAHA default session if stopped"""
+        """Starts or creates the WAHA default session if stopped or not found"""
         try:
             status = await self.get_session_status()
             if status in ["WORKING", "SCAN_QR_CODE"]:
                 return True
             
-            # Start or restart session
+            if status == "STOPPED":
+                logger.info(f"WAHA session '{self.session}' is STOPPED. Calling start...")
+                resp = await self.client.post(f"/api/sessions/{self.session}/start")
+                return resp.status_code in [200, 201]
+
+            # Create or initialize session
+            logger.info(f"Creating WAHA session '{self.session}'...")
             resp = await self.client.post(
                 "/api/sessions",
                 json={
@@ -43,33 +51,83 @@ class WahaClient:
                     "config": {
                         "webhooks": [
                             {
-                                "url": f"http://localhost:{settings.PORT}/api/webhook/waha",
+                                "url": f"http://127.0.0.1:{settings.PORT}/api/webhook/waha",
                                 "events": ["message", "session.status"]
                             }
                         ]
                     }
                 }
             )
-            return resp.status_code in [200, 201]
+            if resp.status_code in [200, 201]:
+                logger.info(f"Session '{self.session}' created successfully.")
+                return True
+            else:
+                logger.warning(f"POST /api/sessions returned {resp.status_code}. Attempting /start fallback...")
+                resp_start = await self.client.post(f"/api/sessions/{self.session}/start")
+                return resp_start.status_code in [200, 201]
         except Exception as e:
             logger.error(f"Error starting WAHA session: {e}")
             return False
 
-    async def get_qr_image(self) -> Optional[bytes]:
-        """Fetches the active QR code as image bytes (PNG)"""
+    async def get_qr_image(self) -> Tuple[Optional[bytes], str]:
+        """Fetches the active QR code as image bytes (PNG), auto-starting session and polling if needed"""
         try:
-            # First try the auth/qr endpoint
-            resp = await self.client.get(f"/api/{self.session}/auth/qr")
-            if resp.status_code == 200 and resp.content:
-                return resp.content
-            
-            # Fallback to screenshot
-            resp_screen = await self.client.get(f"/api/screenshot?session={self.session}")
-            if resp_screen.status_code == 200 and resp_screen.content:
-                return resp_screen.content
+            status = await self.get_session_status()
+            if status == "WORKING":
+                return None, "WORKING"
+
+            if status in ["NOT_FOUND", "STOPPED", "FAILED", "DISCONNECTED"]:
+                logger.info(f"WAHA session is {status}. Auto-starting session '{self.session}'...")
+                await self.start_session()
+                await asyncio.sleep(2)
+
+            # Poll for QR code ready (up to 8 attempts * 1.5s = ~12 seconds)
+            for attempt in range(8):
+                status = await self.get_session_status()
+                if status == "WORKING":
+                    return None, "WORKING"
+
+                # 1. Try auth/qr endpoint with Accept: image/png
+                try:
+                    resp = await self.client.get(
+                        f"/api/{self.session}/auth/qr",
+                        headers={"Accept": "image/png"}
+                    )
+                    if resp.status_code == 200 and resp.content and len(resp.content) > 100:
+                        content_type = resp.headers.get("content-type", "")
+                        if "json" in content_type:
+                            data = resp.json()
+                            b64 = data.get("data") or data.get("qr")
+                            if b64:
+                                return base64.b64decode(b64.split(",")[-1]), "SCAN_QR_CODE"
+                        else:
+                            return resp.content, "SCAN_QR_CODE"
+                except Exception as err:
+                    logger.debug(f"auth/qr attempt {attempt+1} error: {err}")
+
+                # 2. Try screenshot endpoint fallback
+                try:
+                    resp_screen = await self.client.get(f"/api/screenshot?session={self.session}")
+                    if resp_screen.status_code == 200 and resp_screen.content and len(resp_screen.content) > 100:
+                        return resp_screen.content, "SCAN_QR_CODE"
+                except Exception as err:
+                    logger.debug(f"screenshot attempt {attempt+1} error: {err}")
+
+                # 3. Try sessions screenshot endpoint
+                try:
+                    resp_s2 = await self.client.get(f"/api/sessions/{self.session}/screenshot")
+                    if resp_s2.status_code == 200 and resp_s2.content and len(resp_s2.content) > 100:
+                        return resp_s2.content, "SCAN_QR_CODE"
+                except Exception as err:
+                    logger.debug(f"sessions screenshot attempt {attempt+1} error: {err}")
+
+                logger.info(f"Waiting for QR code (status: {status}, attempt: {attempt+1}/8)...")
+                await asyncio.sleep(1.5)
+
+            return None, status
         except Exception as e:
             logger.error(f"Error fetching QR code: {e}")
-        return None
+            return None, "ERROR"
 
     async def start_typing(self, chat_id: str):
         """Shows 'typing...' indicator on WhatsApp"""

@@ -127,21 +127,29 @@ class TelegramBotManager:
 
     async def cmd_qr(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_admin(update.effective_user.id): return
-        await update.message.reply_text("⏳ Fetching WhatsApp QR Code...")
+        msg = await update.message.reply_text("⏳ Generating WhatsApp QR Code... Please wait a few seconds.")
         
-        qr_bytes = await waha.get_qr_image()
+        qr_bytes, status = await waha.get_qr_image()
         if qr_bytes:
             await update.message.reply_photo(
                 photo=qr_bytes,
-                caption="📱 *Scan this QR Code in WhatsApp:*\nSettings > Linked Devices > Link a Device",
+                caption=(
+                    "📱 *Scan this QR Code in WhatsApp:*\n\n"
+                    "1. Open WhatsApp on your phone\n"
+                    "2. Go to **Settings > Linked Devices**\n"
+                    "3. Tap **Link a Device** and scan this QR code\n\n"
+                    "*(Code is live. Scan promptly!)*"
+                ),
                 parse_mode="Markdown"
             )
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+        elif status == "WORKING":
+            await msg.edit_text("✅ WhatsApp is already connected and **WORKING**! No QR scan needed.", parse_mode="Markdown")
         else:
-            status = await waha.get_session_status()
-            if status == "WORKING":
-                await update.message.reply_text("✅ WhatsApp is already connected and WORKING! No QR scan needed.")
-            else:
-                await update.message.reply_text(f"⚠️ Could not fetch QR. Status: `{status}`. Please retry in a few moments.")
+            await msg.edit_text(f"⚠️ Could not fetch QR yet. Session status: `{status}`.\nPlease retry with /qr in 5-10 seconds.", parse_mode="Markdown")
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_admin(update.effective_user.id): return
@@ -250,16 +258,28 @@ class TelegramBotManager:
                 parse_mode="Markdown"
             )
         elif data == "get_qr":
-            qr_bytes = await waha.get_qr_image()
+            msg = await query.message.reply_text("⏳ Generating WhatsApp QR Code... Please wait a few seconds.")
+            qr_bytes, status = await waha.get_qr_image()
             if qr_bytes:
                 await query.message.reply_photo(
                     photo=qr_bytes,
-                    caption="📱 *Scan this QR Code in WhatsApp:*",
+                    caption=(
+                        "📱 *Scan this QR Code in WhatsApp:*\n\n"
+                        "1. Open WhatsApp on your phone\n"
+                        "2. Go to **Settings > Linked Devices**\n"
+                        "3. Tap **Link a Device** and scan this QR code\n\n"
+                        "*(Code is live. Scan promptly!)*"
+                    ),
                     parse_mode="Markdown"
                 )
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+            elif status == "WORKING":
+                await msg.edit_text("✅ WhatsApp is already connected and **WORKING**! No QR scan needed.", parse_mode="Markdown")
             else:
-                status = await waha.get_session_status()
-                await query.message.reply_text(f"WhatsApp Status: `{status}`")
+                await msg.edit_text(f"⚠️ Could not fetch QR yet. Session status: `{status}`.\nPlease retry in 5-10 seconds.", parse_mode="Markdown")
         elif data == "get_status":
             status = await waha.get_session_status()
             is_offline = await db.is_offline_mode()

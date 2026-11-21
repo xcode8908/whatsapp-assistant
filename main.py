@@ -125,6 +125,23 @@ async def lifespan(app: FastAPI):
     # Start Background Scheduler
     sched_task = asyncio.create_task(scheduler_loop())
 
+    # Proactively ensure WAHA session is initialized in background
+    async def init_waha_session():
+        for _ in range(15):
+            await asyncio.sleep(2)
+            try:
+                status = await waha.get_session_status()
+                if status != "DISCONNECTED":
+                    logger.info(f"WAHA reached. Current session status: {status}")
+                    if status in ["NOT_FOUND", "STOPPED"]:
+                        logger.info(f"Auto-initializing WAHA session '{waha.session}'...")
+                        await waha.start_session()
+                    break
+            except Exception as e:
+                logger.debug(f"Waiting for WAHA engine: {e}")
+
+    asyncio.create_task(init_waha_session())
+
     yield
 
     # Shutdown
