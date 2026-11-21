@@ -197,6 +197,21 @@ class Database:
                 """, (chat_id, now, now))
                 await db.commit()
 
+    async def clear_cooldown(self, chat_id: Optional[str] = None):
+        if self.is_postgres:
+            async with self.pg_pool.acquire() as conn:
+                if chat_id:
+                    await conn.execute("DELETE FROM cooldowns WHERE chat_id = $1", chat_id)
+                else:
+                    await conn.execute("DELETE FROM cooldowns")
+        else:
+            async with aiosqlite.connect(self.sqlite_path) as db:
+                if chat_id:
+                    await db.execute("DELETE FROM cooldowns WHERE chat_id = ?", (chat_id,))
+                else:
+                    await db.execute("DELETE FROM cooldowns")
+                await db.commit()
+
     # ==========================================
     # Chat History (For AI Context)
     # ==========================================

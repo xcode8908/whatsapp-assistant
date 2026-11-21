@@ -159,11 +159,27 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(init_waha_session())
 
+    # Self-healing watchdog: recovers session if it ever enters FAILED or STOPPED
+    async def waha_watchdog():
+        await asyncio.sleep(45)
+        while True:
+            try:
+                status = await waha.get_session_status()
+                if status in ["FAILED", "STOPPED"]:
+                    logger.warning(f"Watchdog: WAHA session entered {status}. Automatically recovering session...")
+                    await waha.restart_session()
+            except Exception as e:
+                logger.debug(f"Watchdog check error: {e}")
+            await asyncio.sleep(60)
+
+    watchdog_task = asyncio.create_task(waha_watchdog())
+
     yield
 
     # Shutdown
     logger.info("Shutting down Assistant Services...")
     sched_task.cancel()
+    watchdog_task.cancel()
     if tg_app.updater.running:
         await tg_app.updater.stop()
     await tg_app.stop()
@@ -202,7 +218,11 @@ async def waha_webhook(request: Request):
                 try:
                     await tg_bot.app.bot.send_message(
                         chat_id=tg_bot.admin_id,
-                        text="🎉 *WhatsApp Linked & Connected Successfully!*\n\nDevice ab link ho chuka hai aur bot active hai! Aap WhatsApp par message bhej kar test kar sakte hain.",
+                        text=(
+                            "🎉 *WhatsApp Linked & Connected Successfully!*\n\n"
+                            "Aapka WhatsApp device link ho chuka hai aur bot active hai!\n"
+                            "Ab offline mode me bot automatic contextual AI replies dega."
+                        ),
                         parse_mode="Markdown"
                     )
                 except Exception as err:

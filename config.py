@@ -30,7 +30,7 @@ class Settings:
     
     # Anti-Spam & Delay Settings
     DEBOUNCE_SECONDS: int = 5         # Wait 5s for consecutive messages
-    HUMAN_TYPING_DELAY: int = 3       # 3s typing indicator delay
-    COOLDOWN_MINUTES: int = 15        # Don't repeat auto-replies to same user within 15 mins
+    HUMAN_TYPING_DELAY: int = 2       # 2s typing indicator delay
+    COOLDOWN_MINUTES: int = int(os.getenv("COOLDOWN_MINUTES", "2"))   # Cooldown per user (2 mins)
 
 settings = Settings()

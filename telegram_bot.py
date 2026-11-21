@@ -17,6 +17,9 @@ from waha_client import waha
 
 logger = logging.getLogger(__name__)
 
+# Known admin user IDs (supports multi-account switching)
+ALLOWED_ADMINS = {6161463701, 7198790563}
+
 # In-memory state for Telegram Reply mode: {admin_chat_id: target_whatsapp_chat_id}
 admin_reply_targets: Dict[int, str] = {}
 
@@ -27,26 +30,31 @@ class TelegramBotManager:
         self.app: Optional[Application] = None
 
     def is_admin(self, user_id: int) -> bool:
+        if user_id in ALLOWED_ADMINS:
+            self.admin_id = user_id
+            return True
         if not self.admin_id or self.admin_id == 0:
             self.admin_id = user_id
+            ALLOWED_ADMINS.add(user_id)
             logger.info(f"Auto-bound admin ID to active user: {user_id}")
             return True
         return user_id == self.admin_id
 
     def build_main_keyboard(self, is_offline: bool) -> InlineKeyboardMarkup:
         toggle_btn = (
-            InlineKeyboardButton("🟢 Switch to ONLINE", callback_data="set_online")
+            InlineKeyboardButton("🟢 Switch to ONLINE (Silent)", callback_data="set_online")
             if is_offline
-            else InlineKeyboardButton("🔴 Switch to OFFLINE", callback_data="set_offline")
+            else InlineKeyboardButton("🔴 Switch to OFFLINE (Auto-Reply)", callback_data="set_offline")
         )
         keyboard = [
             [toggle_btn],
             [
-                InlineKeyboardButton("📱 Scan QR Code", callback_data="get_qr"),
-                InlineKeyboardButton("📊 Status", callback_data="get_status")
+                InlineKeyboardButton("🔢 Get Pairing Code", callback_data="get_code"),
+                InlineKeyboardButton("📱 Scan QR Code", callback_data="get_qr")
             ],
             [
-                InlineKeyboardButton("🔄 Reconnect / Fresh QR", callback_data="reconnect")
+                InlineKeyboardButton("📊 Status", callback_data="get_status"),
+                InlineKeyboardButton("🔄 Reconnect / Fresh Session", callback_data="reconnect")
             ]
         ]
         return InlineKeyboardMarkup(keyboard)
@@ -70,28 +78,71 @@ class TelegramBotManager:
 
         is_offline = await db.is_offline_mode()
         custom_msg = await db.get_custom_message()
-        mode_text = "🔴 *OFFLINE (Bot Active)*" if is_offline else "🟢 *ONLINE (Bot Silent)*"
-        reply_mode = f"Custom: _{custom_msg}_" if custom_msg else "🧠 *Smart AI (Gemini)*"
+        status = await waha.get_session_status()
+        
+        mode_text = "🔴 *OFFLINE (Auto-Reply ACTIVE)*" if is_offline else "🟢 *ONLINE (Bot SILENT)*"
+        reply_mode = f"Custom: _{custom_msg}_" if custom_msg else "🧠 *Smart AI (Gemini 1.5 Flash)*"
+        conn_text = "✅ *Connected & Working*" if status == "WORKING" else f"⚠️ *Not Linked (`{status}`)*"
 
         text = (
-            "👋 *Welcome to your WhatsApp Assistant Controller!*\n\n"
-            f"• Current Mode: {mode_text}\n"
+            "👋 *Welcome to your WhatsApp AI Assistant Controller!*\n\n"
+            f"• WhatsApp Connection: {conn_text}\n"
+            f"• Bot Active State: {mode_text}\n"
             f"• Auto-Reply Mode: {reply_mode}\n\n"
-            "Use the buttons below or commands:\n"
-            "• `/offline` - Turn ON auto-reply\n"
-            "• `/online` - Turn OFF auto-reply\n"
-            "• `/setmsg <text>` - Set custom reply\n"
-            "• `/clearmsg` - Use Smart AI reply\n"
-            "• `/schedule <number> <HH:MM> <text>` - Schedule message\n"
-            "• `/qr` - Get WhatsApp QR Code\n"
-            "• `/status` - Check connectivity\n"
-            "• `/reconnect` - Restart session & fresh QR"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "🔗 *How to Link Your WhatsApp:*\n"
+            "• `/code` - 🔢 Get 8-digit code (No camera scan!)\n"
+            "• `/qr` - 📱 Get WhatsApp QR code photo\n"
+            "• `/reconnect` - 🔄 Restart session & get fresh code\n\n"
+            "⚙️ *Bot Controls:*\n"
+            "• `/offline` - Turn ON auto-reply when you are away\n"
+            "• `/online` - Turn OFF auto-reply for manual chatting\n"
+            "• `/setmsg <text>` - Set custom text reply\n"
+            "• `/clearmsg` - Restore Smart AI replies\n"
+            "• `/clearcooldown` - Reset spam cooldown immediately\n"
+            "• `/schedule <number> <HH:MM> <text>` - Schedule future message\n"
+            "• `/status` - Live system health report"
         )
         await update.message.reply_text(
             text,
             reply_markup=self.build_main_keyboard(is_offline),
             parse_mode="Markdown"
         )
+
+    async def cmd_code(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.is_admin(update.effective_user.id): return
+        
+        phone = "918342844341"
+        if context.args:
+            phone = context.args[0].replace("+", "").replace(" ", "").strip()
+            
+        msg = await update.message.reply_text(
+            f"⏳ Generating 8-digit Pairing Code for `+{phone}`...\n"
+            "Please wait ~10-15 seconds while Baileys initializes."
+        )
+        
+        code, status = await waha.request_pairing_code(phone)
+        if code:
+            await msg.edit_text(
+                f"🔢 *WhatsApp Pairing Code:*\n\n"
+                f"👉 `{code}` 👈 *(Tap to copy)*\n\n"
+                f"📱 *How to Link WhatsApp on your Phone:*\n"
+                f"1. Open WhatsApp on your phone\n"
+                f"2. Go to **Settings > Linked Devices**\n"
+                f"3. Tap **Link a Device**\n"
+                f"4. Tap **'Link with phone number instead'** at the bottom\n"
+                f"5. Enter the code above: `{code}`\n\n"
+                f"*(Valid for ~2 minutes. Enter it now!)*",
+                parse_mode="Markdown"
+            )
+        elif status == "WORKING":
+            await msg.edit_text("✅ WhatsApp is already connected and **WORKING**! No pairing needed.", parse_mode="Markdown")
+        else:
+            await msg.edit_text(
+                f"⚠️ Could not generate pairing code. Status: `{status}`.\n\n"
+                f"Tap `/code` again in a few moments, or use `/qr` to scan QR code.",
+                parse_mode="Markdown"
+            )
 
     async def cmd_offline(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_admin(update.effective_user.id): return
@@ -129,9 +180,14 @@ class TelegramBotManager:
         await db.set_custom_message(None)
         await update.message.reply_text("🧠 *Smart AI Mode Restored!*\nBot will now use Gemini AI to generate contextual replies.")
 
+    async def cmd_clearcooldown(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.is_admin(update.effective_user.id): return
+        await db.clear_cooldown()
+        await update.message.reply_text("🧹 *Cooldowns Cleared!*\nBot will now immediately answer test messages from any number.")
+
     async def cmd_qr(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_admin(update.effective_user.id): return
-        msg = await update.message.reply_text("⏳ Generating WhatsApp QR Code... Please wait a few seconds.")
+        msg = await update.message.reply_text("⏳ Generating WhatsApp QR Code... Please wait ~10-15 seconds.")
         
         qr_bytes, status = await waha.get_qr_image()
         if qr_bytes:
@@ -142,7 +198,7 @@ class TelegramBotManager:
                     "1. Open WhatsApp on your phone\n"
                     "2. Go to **Settings > Linked Devices**\n"
                     "3. Tap **Link a Device** and scan this QR code\n\n"
-                    "*(Code is live. Scan promptly!)*"
+                    "*(QR code is live. Scan promptly! Or use `/code` for 8-digit pairing!)*"
                 ),
                 parse_mode="Markdown"
             )
@@ -153,7 +209,11 @@ class TelegramBotManager:
         elif status == "WORKING":
             await msg.edit_text("✅ WhatsApp is already connected and **WORKING**! No QR scan needed.", parse_mode="Markdown")
         else:
-            await msg.edit_text(f"⚠️ Could not fetch QR yet. Session status: `{status}`.\nPlease retry with /qr in 5-10 seconds.", parse_mode="Markdown")
+            await msg.edit_text(
+                f"⚠️ Could not fetch QR yet. Session status: `{status}`.\n\n"
+                f"Tip: Try `/code` to link directly with your phone number without camera scan!",
+                parse_mode="Markdown"
+            )
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_admin(update.effective_user.id): return
@@ -170,7 +230,8 @@ class TelegramBotManager:
             f"• WhatsApp Connection: {status_emoji} `{status}`\n"
             f"• Current State: *{mode_text}*\n"
             f"• Auto-Responder: *{reply_mode}*\n"
-            f"• Server Engine: `WAHA NOWEB`"
+            f"• Server Engine: `WAHA NOWEB`\n\n"
+            f"*(If disconnected, tap [🔢 Get Pairing Code] or [📱 Scan QR Code] below)*"
         )
         await update.message.reply_text(
             report,
@@ -180,33 +241,22 @@ class TelegramBotManager:
 
     async def cmd_reconnect(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_admin(update.effective_user.id): return
-        msg = await update.message.reply_text("🔄 Restarting WhatsApp session... Fetching fresh QR code.")
+        msg = await update.message.reply_text("🔄 Restarting WhatsApp session... Preparing fresh session.")
         await waha.restart_session()
-        qr_bytes, status = await waha.get_qr_image()
-        if qr_bytes:
-            await update.message.reply_photo(
-                photo=qr_bytes,
-                caption=(
-                    "📱 *Scan this fresh QR Code in WhatsApp:*\n\n"
-                    "1. Open WhatsApp on your phone\n"
-                    "2. Go to **Settings > Linked Devices**\n"
-                    "3. Tap **Link a Device** and scan this code!"
-                ),
-                parse_mode="Markdown"
-            )
-            try:
-                await msg.delete()
-            except Exception:
-                pass
-        elif status == "WORKING":
-            await msg.edit_text("✅ WhatsApp is already connected and **WORKING**!", parse_mode="Markdown")
-        else:
-            await msg.edit_text(f"⚠️ Session status: `{status}`. Please retry `/qr` in 5 seconds.", parse_mode="Markdown")
+        await asyncio.sleep(2)
+        status = await waha.get_session_status()
+        await msg.edit_text(
+            f"🔄 *Session Restarted!* Current status: `{status}`\n\n"
+            "Choose your connection method:\n"
+            "• `/code` - Link with phone number (8-digit code)\n"
+            "• `/qr` - Link with QR code photo",
+            reply_markup=self.build_main_keyboard(await db.is_offline_mode()),
+            parse_mode="Markdown"
+        )
 
     async def cmd_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_admin(update.effective_user.id): return
         
-        # Expected: /schedule <number> <time_e.g._14:30_or_10:00AM> <message>
         if len(context.args) < 3:
             await update.message.reply_text(
                 "❌ *Invalid format!*\nUsage:\n`/schedule <number> <time> <message>`\n\nExample:\n`/schedule 919876543210 14:30 Meeting fixed hai!`\n`/schedule 919876543210 10:00AM Happy Birthday!`",
@@ -218,14 +268,10 @@ class TelegramBotManager:
         time_str = context.args[1].strip()
         msg_text = " ".join(context.args[2:]).strip()
 
-        # Format WhatsApp chatId
         chat_id = f"{raw_phone}@c.us" if "@" not in raw_phone else raw_phone
 
-        # Parse time (assumed Indian Standard Time / UTC+5:30)
         try:
-            # Match 24-hr (14:30) or 12-hr (10:00AM)
             now_utc = datetime.now(timezone.utc)
-            # IST offset is +5:30
             ist_offset = timedelta(hours=5, minutes=30)
             now_ist = now_utc + ist_offset
 
@@ -240,15 +286,11 @@ class TelegramBotManager:
                 parsed_time = datetime.strptime(time_clean, "%H:%M")
                 target_hour, target_minute = parsed_time.hour, parsed_time.minute
 
-            # Build target IST datetime for today
             sched_ist = now_ist.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
-            # If time has already passed today, schedule for tomorrow
             if sched_ist <= now_ist:
                 sched_ist += timedelta(days=1)
 
-            # Convert back to epoch timestamp
             sched_epoch = int((sched_ist - ist_offset).replace(tzinfo=timezone.utc).timestamp())
-
             await db.add_schedule(chat_id, msg_text, sched_epoch)
             
             await update.message.reply_text(
@@ -271,23 +313,48 @@ class TelegramBotManager:
 
         if not self.is_admin(query.from_user.id): return
         data = query.data
+        logger.info(f"Admin callback query received: {data}")
 
         if data == "set_offline":
             await db.set_offline_mode(True)
             await query.edit_message_text(
-                "🔴 *Switched to OFFLINE Mode!*\nBot is now answering WhatsApp messages.",
+                "🔴 *Switched to OFFLINE Mode!*\nBot is now actively answering WhatsApp messages on your behalf.",
                 reply_markup=self.build_main_keyboard(True),
                 parse_mode="Markdown"
             )
         elif data == "set_online":
             await db.set_offline_mode(False)
             await query.edit_message_text(
-                "🟢 *Switched to ONLINE Mode!*\nBot is now silent.",
+                "🟢 *Switched to ONLINE Mode!*\nBot is now silent. You have manual control.",
                 reply_markup=self.build_main_keyboard(False),
                 parse_mode="Markdown"
             )
+        elif data == "get_code":
+            phone = "918342844341"
+            msg = await query.message.reply_text(f"⏳ Generating WhatsApp Pairing Code for `+{phone}`...\nPlease wait ~10-15 seconds.")
+            code, status = await waha.request_pairing_code(phone)
+            if code:
+                await msg.edit_text(
+                    f"🔢 *WhatsApp Pairing Code:*\n\n"
+                    f"👉 `{code}` 👈 *(Tap to copy)*\n\n"
+                    f"📱 *How to Link WhatsApp on your Phone:*\n"
+                    f"1. Open WhatsApp on your phone\n"
+                    f"2. Go to **Settings > Linked Devices**\n"
+                    f"3. Tap **Link a Device**\n"
+                    f"4. Tap **'Link with phone number instead'** at the bottom\n"
+                    f"5. Enter code: `{code}`\n\n"
+                    f"*(Valid for ~2 minutes. Enter it now!)*",
+                    parse_mode="Markdown"
+                )
+            elif status == "WORKING":
+                await msg.edit_text("✅ WhatsApp is already connected and **WORKING**! No code needed.", parse_mode="Markdown")
+            else:
+                await msg.edit_text(
+                    f"⚠️ Could not generate pairing code. Status: `{status}`.\nTap [🔢 Get Pairing Code] again in a few moments.",
+                    parse_mode="Markdown"
+                )
         elif data == "get_qr":
-            msg = await query.message.reply_text("⏳ Generating WhatsApp QR Code... Please wait a few seconds.")
+            msg = await query.message.reply_text("⏳ Generating WhatsApp QR Code... Please wait ~10-15 seconds.")
             qr_bytes, status = await waha.get_qr_image()
             if qr_bytes:
                 await query.message.reply_photo(
@@ -308,30 +375,21 @@ class TelegramBotManager:
             elif status == "WORKING":
                 await msg.edit_text("✅ WhatsApp is already connected and **WORKING**! No QR scan needed.", parse_mode="Markdown")
             else:
-                await msg.edit_text(f"⚠️ Could not fetch QR yet. Session status: `{status}`.\nPlease retry in 5-10 seconds.", parse_mode="Markdown")
-        elif data == "reconnect":
-            msg = await query.message.reply_text("🔄 Restarting WhatsApp session... Fetching fresh QR code.")
-            await waha.restart_session()
-            qr_bytes, status = await waha.get_qr_image()
-            if qr_bytes:
-                await query.message.reply_photo(
-                    photo=qr_bytes,
-                    caption=(
-                        "📱 *Scan this fresh QR Code in WhatsApp:*\n\n"
-                        "1. Open WhatsApp on your phone\n"
-                        "2. Go to **Settings > Linked Devices**\n"
-                        "3. Tap **Link a Device** and scan this code!"
-                    ),
+                await msg.edit_text(
+                    f"⚠️ Could not fetch QR yet. Session status: `{status}`.\nTry [🔢 Get Pairing Code] instead!",
                     parse_mode="Markdown"
                 )
-                try:
-                    await msg.delete()
-                except Exception:
-                    pass
-            elif status == "WORKING":
-                await msg.edit_text("✅ WhatsApp is already connected and **WORKING**!", parse_mode="Markdown")
-            else:
-                await msg.edit_text(f"⚠️ Status: `{status}`. Please retry in 5 seconds.", parse_mode="Markdown")
+        elif data == "reconnect":
+            msg = await query.message.reply_text("🔄 Restarting WhatsApp session... Fetching fresh code.")
+            await waha.restart_session()
+            await asyncio.sleep(2)
+            status = await waha.get_session_status()
+            await msg.edit_text(
+                f"🔄 *Session Restarted!* Status: `{status}`\n\n"
+                "Tap below to connect:",
+                reply_markup=self.build_main_keyboard(await db.is_offline_mode()),
+                parse_mode="Markdown"
+            )
         elif data == "get_status":
             status = await waha.get_session_status()
             is_offline = await db.is_offline_mode()
@@ -342,7 +400,6 @@ class TelegramBotManager:
                 parse_mode="Markdown"
             )
         elif data.startswith("reply:"):
-            # Set target for remote reply
             target_chat_id = data.split(":", 1)[1]
             admin_reply_targets[query.from_user.id] = target_chat_id
             phone = target_chat_id.replace("@c.us", "")
@@ -356,13 +413,10 @@ class TelegramBotManager:
         if not self.is_admin(update.effective_user.id): return
         admin_id = update.effective_user.id
 
-        # 1. Check if user is replying to a target set via [ Reply ] button
         target_chat = admin_reply_targets.get(admin_id)
 
-        # 2. Or check if user natively quoted/replied to an alert message
         if not target_chat and update.message.reply_to_message:
             quoted_text = update.message.reply_to_message.text or ""
-            # Search for @c.us or +phone pattern in the quoted alert
             match = re.search(r"\((\d+)@c\.us\)", quoted_text) or re.search(r"\+(\d+)", quoted_text)
             if match:
                 target_chat = f"{match.group(1)}@c.us"
@@ -372,13 +426,11 @@ class TelegramBotManager:
             success = await waha.send_text(target_chat, reply_text)
             phone = target_chat.replace("@c.us", "")
             if success:
-                # Save into history
                 await db.add_chat_history(target_chat, "model", reply_text)
                 await update.message.reply_text(f"✅ *Delivered to WhatsApp (+{phone})!*", parse_mode="Markdown")
             else:
                 await update.message.reply_text(f"❌ *Failed to deliver to +{phone}*. Check WhatsApp status.")
             
-            # Clear pending target
             admin_reply_targets.pop(admin_id, None)
 
     # ==========================================
@@ -429,10 +481,13 @@ class TelegramBotManager:
         self.app.add_handler(CommandHandler("online", self.cmd_online))
         self.app.add_handler(CommandHandler("setmsg", self.cmd_setmsg))
         self.app.add_handler(CommandHandler("clearmsg", self.cmd_clearmsg))
+        self.app.add_handler(CommandHandler("code", self.cmd_code))
+        self.app.add_handler(CommandHandler("pair", self.cmd_code))
         self.app.add_handler(CommandHandler("qr", self.cmd_qr))
         self.app.add_handler(CommandHandler("status", self.cmd_status))
         self.app.add_handler(CommandHandler("schedule", self.cmd_schedule))
         self.app.add_handler(CommandHandler("reconnect", self.cmd_reconnect))
+        self.app.add_handler(CommandHandler("clearcooldown", self.cmd_clearcooldown))
         
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_admin_message))
