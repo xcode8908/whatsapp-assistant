@@ -16,6 +16,7 @@ echo "Starting WAHA engine on internal port 3000..."
     export WHATSAPP_API_PORT=3000
     export WAHA_API_KEY="silentxop_waha_secure_key_2026"
     export WHATSAPP_DEFAULT_ENGINE=NOWEB
+    export WHATSAPP_NOWEB_WA_VERSION=auto-web
     export WHATSAPP_START_SESSION=default
     export WHATSAPP_RESTART_ALL_SESSIONS=True
     export WHATSAPP_SWAGGER_ENABLED=false

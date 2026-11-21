@@ -44,6 +44,9 @@ class TelegramBotManager:
             [
                 InlineKeyboardButton("📱 Scan QR Code", callback_data="get_qr"),
                 InlineKeyboardButton("📊 Status", callback_data="get_status")
+            ],
+            [
+                InlineKeyboardButton("🔄 Reconnect / Fresh QR", callback_data="reconnect")
             ]
         ]
         return InlineKeyboardMarkup(keyboard)
@@ -81,7 +84,8 @@ class TelegramBotManager:
             "• `/clearmsg` - Use Smart AI reply\n"
             "• `/schedule <number> <HH:MM> <text>` - Schedule message\n"
             "• `/qr` - Get WhatsApp QR Code\n"
-            "• `/status` - Check connectivity"
+            "• `/status` - Check connectivity\n"
+            "• `/reconnect` - Restart session & fresh QR"
         )
         await update.message.reply_text(
             text,
@@ -173,6 +177,31 @@ class TelegramBotManager:
             reply_markup=self.build_main_keyboard(is_offline),
             parse_mode="Markdown"
         )
+
+    async def cmd_reconnect(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.is_admin(update.effective_user.id): return
+        msg = await update.message.reply_text("🔄 Restarting WhatsApp session... Fetching fresh QR code.")
+        await waha.restart_session()
+        qr_bytes, status = await waha.get_qr_image()
+        if qr_bytes:
+            await update.message.reply_photo(
+                photo=qr_bytes,
+                caption=(
+                    "📱 *Scan this fresh QR Code in WhatsApp:*\n\n"
+                    "1. Open WhatsApp on your phone\n"
+                    "2. Go to **Settings > Linked Devices**\n"
+                    "3. Tap **Link a Device** and scan this code!"
+                ),
+                parse_mode="Markdown"
+            )
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+        elif status == "WORKING":
+            await msg.edit_text("✅ WhatsApp is already connected and **WORKING**!", parse_mode="Markdown")
+        else:
+            await msg.edit_text(f"⚠️ Session status: `{status}`. Please retry `/qr` in 5 seconds.", parse_mode="Markdown")
 
     async def cmd_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_admin(update.effective_user.id): return
@@ -280,6 +309,29 @@ class TelegramBotManager:
                 await msg.edit_text("✅ WhatsApp is already connected and **WORKING**! No QR scan needed.", parse_mode="Markdown")
             else:
                 await msg.edit_text(f"⚠️ Could not fetch QR yet. Session status: `{status}`.\nPlease retry in 5-10 seconds.", parse_mode="Markdown")
+        elif data == "reconnect":
+            msg = await query.message.reply_text("🔄 Restarting WhatsApp session... Fetching fresh QR code.")
+            await waha.restart_session()
+            qr_bytes, status = await waha.get_qr_image()
+            if qr_bytes:
+                await query.message.reply_photo(
+                    photo=qr_bytes,
+                    caption=(
+                        "📱 *Scan this fresh QR Code in WhatsApp:*\n\n"
+                        "1. Open WhatsApp on your phone\n"
+                        "2. Go to **Settings > Linked Devices**\n"
+                        "3. Tap **Link a Device** and scan this code!"
+                    ),
+                    parse_mode="Markdown"
+                )
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+            elif status == "WORKING":
+                await msg.edit_text("✅ WhatsApp is already connected and **WORKING**!", parse_mode="Markdown")
+            else:
+                await msg.edit_text(f"⚠️ Status: `{status}`. Please retry in 5 seconds.", parse_mode="Markdown")
         elif data == "get_status":
             status = await waha.get_session_status()
             is_offline = await db.is_offline_mode()
@@ -380,6 +432,7 @@ class TelegramBotManager:
         self.app.add_handler(CommandHandler("qr", self.cmd_qr))
         self.app.add_handler(CommandHandler("status", self.cmd_status))
         self.app.add_handler(CommandHandler("schedule", self.cmd_schedule))
+        self.app.add_handler(CommandHandler("reconnect", self.cmd_reconnect))
         
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_admin_message))
