@@ -19,6 +19,7 @@ class Settings:
     # WAHA WhatsApp API (use 127.0.0.1 for explicit IPv4 in Docker)
     WAHA_URL: str = os.getenv("WAHA_URL", "http://127.0.0.1:3000").rstrip("/")
     WAHA_SESSION: str = os.getenv("WAHA_SESSION", "default").strip()
+    WAHA_API_KEY: str = os.getenv("WAHA_API_KEY", "silentxop_waha_secure_key_2026").strip()
     
     # Database (Supabase PostgreSQL or fallback SQLite)
     DATABASE_URL: str = os.getenv("DATABASE_URL", "").strip()

@@ -9,7 +9,11 @@ class WahaClient:
     def __init__(self):
         self.base_url = settings.WAHA_URL
         self.session = settings.WAHA_SESSION
-        self.client = httpx.AsyncClient(base_url=self.base_url, timeout=30.0)
+        self.api_key = settings.WAHA_API_KEY
+        headers = {}
+        if self.api_key:
+            headers["X-Api-Key"] = self.api_key
+        self.client = httpx.AsyncClient(base_url=self.base_url, headers=headers, timeout=30.0)
 
     async def get_session_status(self) -> str:
         """Returns session status: 'WORKING', 'SCAN_QR_CODE', 'STOPPED', etc."""
