@@ -28,6 +28,8 @@ class TelegramBotManager:
 
     def is_admin(self, user_id: int) -> bool:
         if not self.admin_id or self.admin_id == 0:
+            self.admin_id = user_id
+            logger.info(f"Auto-bound admin ID to active user: {user_id}")
             return True
         return user_id == self.admin_id
 

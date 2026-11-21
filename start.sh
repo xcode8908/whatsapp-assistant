@@ -5,24 +5,26 @@ echo "================================================="
 echo "🚀 STARTING WHATSAPP AI ASSISTANT & WAHA BUNDLE"
 echo "================================================="
 
-# Save Render external port
+# External port assigned by Render for Python FastAPI
 RENDER_PORT="${PORT:-10000}"
 
-# Configure WAHA for internal port 3000
-export WHATSAPP_API_PORT=3000
-export WHATSAPP_DEFAULT_ENGINE=NOWEB
-export WHATSAPP_SWAGGER_ENABLED=false
-export WAHA_DASHBOARD_ENABLED=false
-export WAHA_EVENTS_DOWNLOAD_MEDIA=false
-export WAHA_API_DOWNLOAD_MEDIA=false
-export WHATSAPP_HOOK_URL="http://127.0.0.1:${RENDER_PORT}/api/webhook/waha"
-export WHATSAPP_HOOK_EVENTS="message,session.status"
+# 1. Start WAHA inside /app directory strictly isolated on internal port 3000
+echo "Starting WAHA engine on internal port 3000..."
+(
+    cd /app
+    export PORT=3000
+    export WHATSAPP_API_PORT=3000
+    export WHATSAPP_DEFAULT_ENGINE=NOWEB
+    export WHATSAPP_SWAGGER_ENABLED=false
+    export WAHA_DASHBOARD_ENABLED=false
+    export WAHA_EVENTS_DOWNLOAD_MEDIA=false
+    export WAHA_API_DOWNLOAD_MEDIA=false
+    export WHATSAPP_HOOK_URL="http://127.0.0.1:${RENDER_PORT}/api/webhook/waha"
+    export WHATSAPP_HOOK_EVENTS="message,session.status"
+    exec /entrypoint.sh
+) &
 
-# 1. Start WAHA in background on port 3000
-echo "Starting WAHA engine in background on internal port 3000..."
-(PORT=3000 WHATSAPP_API_PORT=3000 cd /app && /entrypoint.sh) &
-
-# 2. Start Python FastAPI & Telegram Bot on Render's external port IMMEDIATELY
+# 2. Start Python FastAPI & Telegram Bot on Render's external port
 echo "Starting Python Assistant Backend on port ${RENDER_PORT}..."
 export PORT="$RENDER_PORT"
 cd /app/assistant
